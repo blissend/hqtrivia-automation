@@ -431,15 +431,20 @@ if __name__ == '__main__':
     start = time.time()
 
     hq = HQTrivia()
-    #hq.location = '/Users/blissend/Downloads/hq'
+
+    # Uncomment and use your own custom settings
+    #hq.location = '/Full/path/to' # Defaults to script location (leave alone)
+    #hq.google_auth_json = '<your_json>.json' (if you're using google vision)
+    hq.verbose = False
 
     # Get picture
     hq.capture(ftype='png')
+    #hq.capture(ftype='tiff') # better for Google Tesseract
 
-    # Read the picture
-    hq.vision()
-    #hq.enhance()
-    #hq.ocr()
+    # Read the picture (use either Tesseract or Vision but not BOTH!!!)
+    hq.vision() # Google Vision API
+    #hq.enhance() # Google Tesseract
+    #hq.ocr() # Google Tesseract
 
     # Parse the picture text
     hq.parse()
