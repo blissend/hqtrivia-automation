@@ -20,8 +20,9 @@ Use python 3.6 and take notice of the modules used in the python file. In partic
 * wikipediaapi - Wikipedia searches
 * vocabulary - Dictionary and synonyms searches
 * pytesseract - Google's free/open source OCR (requires seperate installtion)
-* google.cloud - Google's commercial OCR (free also but with limits and additional setup)
+* google-cloud-vision - Google's commercial OCR (free also but with limits and additional setup)
 
+*Oversimplified steps*
 1. Install python 3.6
 2. Install above packages via pip install <package_name>
 
