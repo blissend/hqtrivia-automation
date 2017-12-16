@@ -17,6 +17,7 @@ Use python 3.6 and take notice of the modules used in the python file. In partic
 * Pillow - Image manipulation
 * numpy - More advanced image manipulation
 * PyObjC - AppleScript for taking screenshot
+* opencv-contrib-python - WebCam for taking screenshot
 * wikipediaapi - Wikipedia searches
 * vocabulary - Dictionary and synonyms searches
 * pytesseract - Google's free/open source OCR (requires seperate installtion)
