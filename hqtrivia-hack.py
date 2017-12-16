@@ -7,8 +7,11 @@ from vocabulary.vocabulary import Vocabulary as vb # dictionary
 import wikipediaapi # for more advance definitions
 #import cv2 # for webcam usage
 from Foundation import * # For osascript crap
-from multiprocessing import Pool, TimeoutError # To lookup information online faster
+from multiprocessing import Pool, TimeoutError # To lookup info online faster
 import time # time how long each section takes
+import io
+from google.cloud import vision # Imports the Google Cloud client library
+from google.cloud.vision import types # Imports the Google Cloud client library
 
 os.environ['NO_PROXY'] = '*' # https://bugs.python.org/issue30385
 
@@ -34,10 +37,13 @@ class HQTrivia():
         try:
             self.picture = sys.argv[1]
         except:
-            self.picture = 'read.tiff'
+            self.picture = 'source'
 
         # Default location of where to work on self.picture
         self.location = os.getcwd()
+
+        # Replace with your own auth file name
+        self.google_auth_json = 'blissend.json'
 
         # Default the language for wikipedia searches
         self.wiki = wikipediaapi.Wikipedia('en')
@@ -56,22 +62,25 @@ class HQTrivia():
     def debug(self, msg):
         print("hqhack.py: " + str(msg))
 
-    def capture(self):
+    def capture(self, ftype='tiff'):
         """
         Simple function to select function to capture picture
         """
+
+        # Set file type
+        self.picture += '.' + ftype
 
         if self.verbose:
             self.debug("method - capture | {!s}".format(self.source))
 
         if self.source == 'quicktime':
-            self.quicktime()
+            self.quicktime(ftype)
         elif self.source == 'webcam':
             self.webcam()
         else:
             self.quicktime()
 
-    def quicktime(self):
+    def quicktime(self, ftype='tiff'):
         """
         Takes screenshot of phone screen via AppleScript
 
@@ -95,6 +104,7 @@ set winID to id of window 1
 end tell
 do shell script "screencapture -x -t tiff -l " & winID &"""
         script += ' " ' + full_path + '"'
+        script = script.replace('tiff', ftype)
 
         s = NSAppleScript.alloc().initWithSource_(script)
         s.executeAndReturnError_(None)
@@ -201,6 +211,45 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
         if self.verbose:
             diff = time.time() - start
             self.debug("method - enhance | elapsed {!s}".format(diff))
+
+    def vision(self):
+        """
+        Google Cloud Vision
+
+        The better OCR tool out there but requires additional setup. It is
+        free under limitations.
+        """
+
+        # Credentials
+        os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = os.path.join(
+            self.location, self.google_auth_json)
+
+        # Instantiates a client
+        client = vision.ImageAnnotatorClient()
+
+        # The image file
+        full_path = os.path.join(self.location, self.picture)
+
+        # Loads the image into memory
+        with io.open(full_path, 'rb') as image_file:
+            content = image_file.read()
+
+        image = types.Image(content=content)
+
+        # Performs text detection on the image file
+        response = client.text_detection(image=image)
+        text = response.text_annotations
+
+        for t in text:
+            self.raw = t.description
+            break
+
+        # Clean up text
+        self.raw = self.raw.split('\n')
+        self.raw.pop(0)
+        self.raw.pop(0)
+        self.raw.pop(0)
+        self.raw.pop(-1)
 
     def ocr(self):
         """
@@ -310,6 +359,10 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
             definitions.append(
                 "[Wikipedia]: " + page.summary[0:1000])
 
+        # Google search
+        CSE = '011133400405573668680:yn1zk6dqkbu'
+        APIKEY = 'AIzaSyCOjm9BASQW6vq_7r-B3IpgEnsJle2JyZc'
+
         # Get dictionary definitions
         define = vb.meaning(value, format='list')
         if define != False:
@@ -381,11 +434,12 @@ if __name__ == '__main__':
     #hq.location = '/Users/blissend/Downloads/hq'
 
     # Get picture
-    hq.capture()
+    hq.capture(ftype='png')
 
     # Read the picture
-    hq.enhance()
-    hq.ocr()
+    hq.vision()
+    #hq.enhance()
+    #hq.ocr()
 
     # Parse the picture text
     hq.parse()
