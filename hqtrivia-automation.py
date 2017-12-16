@@ -5,7 +5,7 @@ import pytesseract # Google OCR
 import numpy as np # more advance photo manipulation
 from vocabulary.vocabulary import Vocabulary as vb # dictionary
 import wikipediaapi # for more advance definitions
-#import cv2 # for webcam usage
+import cv2 # for webcam usage
 from Foundation import * # For osascript crap
 from multiprocessing import Pool, TimeoutError # To lookup info online faster
 import time # time how long each section takes
