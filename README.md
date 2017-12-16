@@ -22,6 +22,9 @@ Use python 3.6 and take notice of the modules used in the python file. In partic
 * pytesseract - Google's free/open source OCR (requires seperate installtion)
 * google.cloud - Google's commercial OCR (free also but with limits and additional setup)
 
+1. Install python 3.6
+2. Install above packages via pip install <package_name>
+
 # Usage
 Simply edit the script at the bottom. Then run it via terminal/console
 
