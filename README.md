@@ -1,4 +1,4 @@
-# hqtrivia-hack (WIP)
+# hqtrivia-automation (WIP)
 I vaguely wondered about the HQ trivia game and automating to get an edge in the game since there is nothing stopping you from googling for answers. Why not automate it in effort to learn? Well here's my attempt...Sc
 Note using this during live game would break HQ's terms of service. So if you want to play around with it like I did, just take snapshots of the question.
 
@@ -29,4 +29,4 @@ Use python 3.6 and take notice of the modules used in the python file. In partic
 # Usage
 Simply edit the script at the bottom. Then run it via terminal/console
 
-> python3 hqtrivia-hack.py 
+> python3 hqtrivia-automation.py 
