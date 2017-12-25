@@ -1,17 +1,31 @@
 import os
 import sys
-from PIL import Image, ImageEnhance # photo manipulation
-import pytesseract # Google OCR
-import numpy as np # more advance photo manipulation
-from vocabulary.vocabulary import Vocabulary as vb # dictionary
-import wikipediaapi # for more advance definitions
-import cv2 # for webcam usage
-from Foundation import * # For osascript crap
-from multiprocessing import Pool, TimeoutError # To lookup info online faster
+import pprint as pp # debug purposes
 import time # time how long each section takes
+import multiprocessing as mp # To lookup info online faster
+
+# Lookup word information
+from vocabulary.vocabulary import Vocabulary # online dictionary
+import nltk
+import wikipediaapi # for more advance definitions
+
+# Capture source image
+import cv2 # for webcam usage
+from Foundation import * # For osascript crap (applescript)
+import urllib
+from bs4 import BeautifulSoup
+import requests
+import webbrowser
+
+# Google Tesseract OCR
+from PIL import Image, ImageEnhance # photo manipulation
+import pytesseract # bindings
+import numpy as np # more advance photo manipulation
+
+# Google Vision OCR
+from google.cloud import vision
+from google.cloud.vision import types
 import io
-from google.cloud import vision # Imports the Google Cloud client library
-from google.cloud.vision import types # Imports the Google Cloud client library
 
 os.environ['NO_PROXY'] = '*' # https://bugs.python.org/issue30385
 
@@ -47,6 +61,7 @@ class HQTrivia():
 
         # Default the language for wikipedia searches
         self.wiki = wikipediaapi.Wikipedia('en')
+        self.vb = Vocabulary(timeout=2)
 
         # The OCR text
         self.raw = ''
@@ -225,7 +240,7 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
             self.location, self.google_auth_json)
 
         # Instantiates a client
-        client = vision.ImageAnnotatorClient()
+        client = vision.ImageAnnotatorClient() # spits out shit, don't know why
 
         # The image file
         full_path = os.path.join(self.location, self.picture)
@@ -246,6 +261,7 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
 
         # Clean up text
         self.raw = self.raw.split('\n')
+        self.debug("method - vision | raw - " + str(self.raw))
         self.raw.pop(0)
         self.raw.pop(0)
         self.raw.pop(0)
@@ -347,48 +363,97 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
             self.debug("method - lookup | starting")
             start = time.time()
 
-        # Copy of self values
+        # Reference/copy of self values
         answers = self.answers[index]
         definitions = self.definitions[answers['answer']]
         value = answers['answer']
+        question_nouns = ''
+        for q in nltk.pos_tag(nltk.word_tokenize(self.question)):
+            if q[1] == 'NN' or q[1] == 'NNP':
+                question_nouns += " " + q[0]
+        question_nouns = question_nouns.strip()
 
         # First get wiki information (the most helpful)
-        page = self.wiki.page(value)
-        if page.exists():
-            definitions.append(page)
-            definitions.append(
-                "[Wikipedia]: " + page.summary[0:1000])
+        try:
+            page = self.wiki.page(value)
+            if page.exists():
+                definitions.append(page)
+                definitions.append("[Wikipedia]: " + page.summary)
+        except:
+            self.debug("method - lookup | issue with wikipedia... ")
+            self.debug(sys.exc_info()[0])
 
         # Google search
-        CSE = '011133400405573668680:yn1zk6dqkbu'
-        APIKEY = 'AIzaSyCOjm9BASQW6vq_7r-B3IpgEnsJle2JyZc'
+        try:
+            text = urllib.parse.quote_plus(value)
+            url = 'https://google.com/search?q=' + text
+            response = requests.get(url, timeout=2)
+            soup = BeautifulSoup(response.text, 'lxml')
+            results = ''
+            for g in soup.find_all(class_='st'):
+                results += " " + g.text
+            definitions.append("[Google]: " + results.strip())
+        except:
+            self.debug("method - lookup | issue with google search... ")
+            self.debug(sys.exc_info()[0])
 
         # Get dictionary definitions
-        define = vb.meaning(value, format='list')
-        if define != False:
-            counter = 1
-            for d in define:
-                definitions.append(
-                    "[Meaning " + str(counter) + "]: " + d)
-                counter += 1
+        define = nltk.corpus.wordnet.synsets(value)
+        if len(define) < 1:
+            # Means local dictionary didn't find anything so search online
+            try:
+                define = self.vb.meaning(value, format='list')
+                if define != False:
+                    # There may be multiple difinitions so count them up
+                    counter = 1
+                    for d in define:
+                        definitions.append(
+                            "[Meaning " + str(counter) + "]: " + d)
+                        counter += 1
+            except:
+                self.debug("method - lookup | issue with vocabulary... ")
+                self.debug(sys.exc_info()[0])
+        else:
+            definitions.append("[Meaning]: " + define[0].definition())
 
         # Get synonyms
-        synonym = vb.synonym(value, format='list')
-        if synonym != False:
-            definitions.append("[Synonyms]: " + str(synonym))
+        if len(define) > 1 and type(define) == list:
+            synonyms = [l.name() for s in define for l in s.lemmas()]
+            # Remove duplicates
+            s = []
+            i = 0
+            while i < len(synonyms):
+                if synonyms[i] in s:
+                    synonyms.pop(i)
+                else:
+                    s.append(synonyms[i])
+                    i += 1
+            definitions.append("[Synonyms]: " + ', '.join(s))
+        else:
+            # Means local dictionary didn't find anything so search online
+            try:
+                synonyms = self.vb.synonym(value, format='list')
+                if synonyms != False:
+                    definitions.append("[Synonyms]: " + str(synonyms))
+            except:
+                self.debug("method - lookup | issue with vocabulary... ")
+                self.debug(sys.exc_info()[0])
 
         # Score the answer
         if len(definitions) > 0:
             for define in definitions:
                 if type(define) == str:
-                    words = define.split(' ')
+                    if "[Wikipedia]" not in define:
+                        d = define.split(':') # remove pretag [Google]: bla blah
+                        words = d[1].split(' ')
                 else:
+                    # This is for WIKIPEDIA sections which isn't a string
                     words = []
                     for i in page.sections:
                         words += i.text.split(' ')
                 for w in words:
-                    if len(w) > 3:
-                        if w in self.question:
+                    if len(w) > 2:
+                        if w in question_nouns:
                             if w not in answers['keywords']:
                                 answers['keywords'].append(w)
                                 answers['score'] += 1
@@ -398,7 +463,7 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
             self.debug("method - lookup | elapsed {!s} for {!s}".format(diff, index))
 
         # Send data back to parent process
-        return [answers, definitions, index]
+        return answers, definitions, index
 
     def display(self):
         print('\n\nQuestion - ' + self.question, end='\n\n')
@@ -410,7 +475,10 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
             print("Choice - " + ans['answer'] + ' - Score ' + str(ans['score']))
             for d in self.definitions[ans['answer']]:
                 if type(d) == str:
-                    print(d)
+                    if len(d) > 140:
+                        print(d[0:140])
+                    else:
+                        print(d)
             print("Keywords - " + str(ans['keywords']))
             print("")
 
@@ -435,7 +503,7 @@ if __name__ == '__main__':
     # Uncomment and use your own custom settings
     #hq.location = '/Full/path/to' # Defaults to script location (leave alone)
     #hq.google_auth_json = '<your_json>.json' (if you're using google vision)
-    hq.verbose = False
+    hq.verbose = True
 
     # Get picture
     hq.capture(ftype='png')
@@ -450,8 +518,8 @@ if __name__ == '__main__':
     hq.parse()
 
     # Get information about answers (time consumping so do multiprocessing)
-    with Pool(3) as p:
-        result = p.starmap_async(hq.lookup, ('1', '2', '3',)).get(timeout=5)
+    with mp.Pool(3) as p:
+        result = p.starmap_async(hq.lookup, ('1', '2', '3',)).get() # .get(timeout=5)
     for new in result:
         index = new[2]
         hq.answers[index] = new[0]
