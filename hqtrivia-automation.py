@@ -360,7 +360,8 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
         """
 
         if self.verbose:
-            self.debug("method - lookup | starting")
+            pre = "method - lookup | "
+            self.debug(pre + "starting")
             start = time.time()
 
         # Reference/copy of self values
@@ -373,17 +374,21 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
                 question_nouns += " " + q[0]
         question_nouns = question_nouns.strip()
 
-        # First get wiki information (the most helpful)
+        # First get wikipedia information (the most helpful)
+        time_wiki = time.time()
         try:
             page = self.wiki.page(value)
             if page.exists():
                 definitions.append(page)
                 definitions.append("[Wikipedia]: " + page.summary)
         except:
-            self.debug("method - lookup | issue with wikipedia... ")
+            self.debug(pre + "issue with wikipedia... ")
             self.debug(sys.exc_info()[0])
+        if self.verbose:
+            self.debug(pre + "wiki elapsed " + str(time.time() - time_wiki))
 
         # Google search
+        time_gsearch = time.time()
         try:
             text = urllib.parse.quote_plus(value)
             url = 'https://google.com/search?q=' + text
@@ -394,10 +399,16 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
                 results += " " + g.text
             definitions.append("[Google]: " + results.strip())
         except:
-            self.debug("method - lookup | issue with google search... ")
+            self.debug(pre + "issue with google search... ")
             self.debug(sys.exc_info()[0])
+        if self.verbose:
+            self.debug(
+                pre +
+                "google search elapsed " +
+                str(time.time() - time_gsearch))
 
         # Get dictionary definitions
+        time_define = time.time()
         define = nltk.corpus.wordnet.synsets(value)
         if len(define) < 1:
             # Means local dictionary didn't find anything so search online
@@ -411,12 +422,18 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
                             "[Meaning " + str(counter) + "]: " + d)
                         counter += 1
             except:
-                self.debug("method - lookup | issue with vocabulary... ")
+                self.debug(pre + "issue with vocabulary... ")
                 self.debug(sys.exc_info()[0])
         else:
             definitions.append("[Meaning]: " + define[0].definition())
+        if self.verbose:
+            self.debug(
+                pre +
+                "dictionary elapsed " +
+                str(time.time() - time_define))
 
         # Get synonyms
+        time_synonyms = time.time()
         if len(define) > 1 and type(define) == list:
             synonyms = [l.name() for s in define for l in s.lemmas()]
             # Remove duplicates
@@ -438,6 +455,11 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
             except:
                 self.debug("method - lookup | issue with vocabulary... ")
                 self.debug(sys.exc_info()[0])
+        if self.verbose:
+            self.debug(
+                pre +
+                "synonyms elapsed " +
+                str(time.time() - time_synonyms))
 
         # Score the answer
         if len(definitions) > 0:
@@ -466,12 +488,20 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
         return answers, definitions, index
 
     def display(self):
+        # Question
         print('\n\nQuestion - ' + self.question, end='\n\n')
-        choice = {'index': 0, 'score': 0}
+
+        # Answers
+        choice = {'index': [], 'score': 0}
         for a, ans in self.answers.items():
-            if ans['score'] > choice['score']:
-                choice['index'] = a
-                choice['score'] = ans['score']
+            if 'NOT' not in self.question:
+                if ans['score'] >= choice['score']:
+                    choice['index'].append(a)
+                    choice['score'] = ans['score']
+            else:
+                if ans['score'] <= choice['score']:
+                    if type(choice['index']) == list:
+                        choice['index'].append(a)
             print("Choice - " + ans['answer'] + ' - Score ' + str(ans['score']))
             for d in self.definitions[ans['answer']]:
                 if type(d) == str:
@@ -479,18 +509,20 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
                         print(d[0:140])
                     else:
                         print(d)
-            print("Keywords - " + str(ans['keywords']))
+            print("[Keywords]: " + str(ans['keywords']))
             print("")
 
-        if choice['score'] > 0:
-            i = choice['index']
-            print(
-                "Answer - " +
-                self.answers[i]['answer'] +
-
-                " - keywords = " +
-                str(self.answers[i]['keywords'])
-            )
+        # Choose answer
+        if len(choice['index']) > 0:
+            choose = []
+            for i in choice['index']:
+                choose.append(self.answers[i]['answer'])
+            print("Answer - " + ', '.join(choose), end='')
+            if 'NOT' in self.question:
+                print(" - NOT keyword so lowest score is " +
+                      str(choice['score']))
+            else:
+                print(" - highest score is " + str(choice['score']))
         else:
             print("Answer - Unknown")
         print("")
