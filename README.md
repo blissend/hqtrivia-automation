@@ -23,10 +23,12 @@ Use python 3.6 and take notice of the modules used in the python file. In partic
 * vocabulary - Dictionary and synonyms searches
 * pytesseract - Google's free/open source OCR (requires seperate installtion)
 * google-cloud-vision - Google's commercial OCR (free also but with limits and additional setup)
+* nltk
 
 *Oversimplified steps*
 1. Install python 3.6
-2. Install above packages via pip install <package_name>
+2. Install above packages via pip3 install <package_name>
+3. For nltk run *python3 -m nltk.downloader all*
 
 # Usage
 Simply edit the script at the bottom. Then run it via terminal/console
