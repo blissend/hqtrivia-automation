@@ -23,7 +23,8 @@ Use python 3.6 and take notice of the modules used in the python file. In partic
 * vocabulary - Dictionary and synonyms searches
 * pytesseract - Google's free/open source OCR (requires seperate installtion)
 * google-cloud-vision - Google's commercial OCR (free also but with limits and additional setup)
-* nltk
+* nltk - local dictionary
+* beautifulsoup4 - parse google searches
 
 *Oversimplified steps*
 1. Install python 3.6
