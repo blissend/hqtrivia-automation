@@ -626,7 +626,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '-V', '--version',
         action='store_true', default=False,
-        help="Spit out debug information"
+        help="Version of script"
     )
     options = parser.parse_args()
 
