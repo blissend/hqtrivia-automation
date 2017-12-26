@@ -35,6 +35,7 @@ Use python 3.6 and take notice of the modules used in the python file. In partic
 # Usage
 Simply execute script with the right options...
 
+```
 $ python3 hqtrivia-automation.py -h
 usage: hqtrivia-automation.py [-h] [-q | -w | -i INPUT] [-v]
 
@@ -47,5 +48,5 @@ optional arguments:
   -i INPUT, --input INPUT
                         Use image provided instead of capturing
   -v, --verbose         Spit out debug information 
-
+```
 NOTE: Have to select -q, -w or use -i
