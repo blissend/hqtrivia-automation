@@ -37,7 +37,7 @@ Simply execute script with the right options...
 
 ```
 $ python3 hqtrivia-automation.py -h
-usage: hqtrivia-automation.py [-h] [-q | -w | -i INPUT] [-v]
+usage: hqtrivia-automation.py [-h] [-q | -w | -i INPUT] [-v] [-V]
 
 Automate searching for answers in HQ Trivia
 
@@ -47,6 +47,7 @@ optional arguments:
   -w, --webcam          Use webcam to capture source image
   -i INPUT, --input INPUT
                         Use image provided instead of capturing
-  -v, --verbose         Spit out debug information 
+  -v, --verbose         Spit out debug information
+  -V, --version         Version of script
 ```
 NOTE: Have to select -q, -w or use -i
