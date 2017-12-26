@@ -33,6 +33,19 @@ Use python 3.6 and take notice of the modules used in the python file. In partic
 3. For nltk run *python3 -m nltk.downloader all*
 
 # Usage
-Simply edit the script at the bottom. Then run it via terminal/console
+Simply execute script with the right options...
 
-> python3 hqtrivia-automation.py 
+$ python3 hqtrivia-automation.py -h
+usage: hqtrivia-automation.py [-h] [-q | -w | -i INPUT] [-v]
+
+Automate searching for answers in HQ Trivia
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -q, --quicktime       Use quicktime to capture source image
+  -w, --webcam          Use webcam to capture source image
+  -i INPUT, --input INPUT
+                        Use image provided instead of capturing
+  -v, --verbose         Spit out debug information 
+
+NOTE: Have to select -q, -w or use -i
