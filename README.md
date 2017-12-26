@@ -29,7 +29,7 @@ Use python 3.6 and take notice of the modules used in the python file. In partic
 *Oversimplified steps*
 1. Install python 3.6
 2. Install above packages
-a. `pip3 install -r requirements.txt`
+    * `pip3 install -r requirements.txt`
 3. For nltk run *python3 -m nltk.downloader all*
 
 # Usage
