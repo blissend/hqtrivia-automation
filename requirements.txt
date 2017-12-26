@@ -9,3 +9,4 @@ nltk
 beautifulsoup4
 Vocabulary
 nltk
+lxml
