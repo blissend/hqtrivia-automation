@@ -29,6 +29,7 @@ from google.cloud.vision import types
 import io
 
 os.environ['NO_PROXY'] = '*' # https://bugs.python.org/issue30385
+VERSION = "2017.12.26.05.37"
 
 """
 I vaguely wondered about the HQ trivia game and automating to get an edge in
@@ -75,6 +76,9 @@ class HQTrivia():
         self.verbose = False
 
     def debug(self, msg):
+        # In multiprocessing environments, the below statement helps
+        sys.stdout.flush()
+
         print("hqtrivia-automation.py: " + str(msg))
 
     def capture(self, ftype='tiff'):
@@ -199,6 +203,9 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
         data[..., :-1][gray_buttons.T] = (255, 255, 255)
         im = Image.fromarray(data)
         width, height = im.size
+        # New file since we're going to edit it
+        file = self.picture.split('.')
+        self.picture = "source_edited." + file[len(file)-1]
         im.crop((0, 300, width, height-400)).save(self.picture)
         #im.resize((round(width*3), round(height*3))).save(
             #self.picture, dpi=(600,600))
@@ -235,7 +242,7 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
             diff = time.time() - start
             self.debug("method - enhance | elapsed {!s}".format(diff))
 
-    def vision_ocr(self):
+    def vision_ocr(self, queue):
         """
         Google Cloud Vision
 
@@ -243,9 +250,27 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
         free under limitations.
         """
 
+        if self.verbose:
+            pre = "method - vision_ocr | "
+            start = time.time()
+            self.debug(pre + "starting")
+
+        # See if we have an auth file, if not return
+        try:
+            file_path = os.path.join(self.location, self.google_auth_json)
+            if not os.path.isfile(file_path):
+                if self.verbose:
+                    self.debug(pre + "no auth file")
+                queue.put("END")
+                return
+        except:
+            if self.verbose:
+                self.debug(pre + "no auth file")
+            queue.put("END")
+            return
+
         # Credentials
-        os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = os.path.join(
-            self.location, self.google_auth_json)
+        os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = file_path
 
         # Instantiates a client
         client = vision.ImageAnnotatorClient() # spits out shit, don't know why
@@ -272,15 +297,26 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
 
         # Clean up text
         self.raw = self.raw.split('\n')
-        self.debug("method - vision | raw - " + str(self.raw))
-        self.raw.pop(0)
-        self.raw.pop(0)
-        self.raw.pop(0)
-        if self.raw[0].lower() == "time's up":
-            self.raw.pop(0)
-        self.raw.pop(-1)
+        self.debug("method - vision_ocr | raw - " + str(self.raw))
+        index = 0
+        while index < len(self.raw):
+            value = self.raw[index].lower()
+            if len(value) < 10:
+                self.raw.pop(index)
+                #self.debug("method - ocr | delete [" + value + "]")
+            else:
+                index += 1
+        self.raw.pop(-1) # swipe left comment
 
-    def tesseract_ocr(self):
+        if self.verbose:
+            self.debug("method - vision_ocr | raw - cleaned" + str(self.raw))
+            diff = time.time() - start
+            self.debug(pre + "elapsed {!s}".format(diff))
+
+        # Return data to parent process
+        queue.put(self.raw)
+
+    def tesseract_ocr(self, queue):
         """
         Google Tesseract OCR
 
@@ -292,8 +328,12 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
         #pytesseract.pytesseract.tesseract_cmd = '<fullpath_to_tesseract>'
 
         if self.verbose:
-            self.debug("method - ocr | starting")
+            pre = "method - tesseract_ocr | "
+            self.debug(pre + "starting")
             start = time.time()
+
+        # Enhance image first since tesseract doesn't do it
+        self.enhance()
 
         # Get text from image (OCR)
         self.raw = pytesseract.image_to_string(
@@ -303,7 +343,7 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
         self.raw = self.raw.split('\n')
 
         if self.verbose:
-            self.debug("method - ocr | raw = " + str(self.raw))
+            self.debug(pre + "raw = " + str(self.raw))
 
         index = 0
         while index < len(self.raw):
@@ -315,9 +355,12 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
                 index += 1
 
         if self.verbose:
-            self.debug("method - ocr | raw - cleaned = " + str(self.raw))
+            self.debug(pre + "raw - cleaned = " + str(self.raw))
             diff = time.time() - start
-            self.debug("method - ocr | elapsed {!s}".format(diff))
+            self.debug(pre + "elapsed {!s}".format(diff))
+
+        # Return the data to main parent process
+        queue.put([self.picture, self.raw])
 
     def parse(self):
         """
@@ -385,7 +428,9 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
         for q in nltk.pos_tag(nltk.word_tokenize(self.question)):
             if q[1] == 'NN' or q[1] == 'NNP':
                 question_nouns += " " + q[0]
-        question_nouns = question_nouns.strip()
+        question_nouns = question_nouns.strip().split(' ')
+        if self.verbose:
+            self.debug(pre + "nouns in question - {!s}".format(question_nouns))
 
         # First get wikipedia information (the most helpful)
         time_wiki = time.time()
@@ -423,8 +468,13 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
         # Get dictionary definitions
         time_define = time.time()
         define = nltk.corpus.wordnet.synsets(value)
+        synset_found = False
         if len(define) < 1:
             # Means local dictionary didn't find anything so search online
+            if self.verbose:
+                self.debug(
+                    pre +
+                    "nltk nothing for {!s}, using vocabulary".format(value))
             try:
                 define = self.vb.meaning(value, format='list')
                 if define != False:
@@ -438,6 +488,7 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
                 self.debug(pre + "issue with vocabulary... ")
                 self.debug(sys.exc_info()[0])
         else:
+            synset_found = True
             definitions.append("[Meaning]: " + define[0].definition())
         if self.verbose:
             self.debug(
@@ -447,29 +498,26 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
 
         # Get synonyms
         time_synonyms = time.time()
-        no_definitions = True
-        if type(define) == list:
-            if len(define) > 0:
-                no_definitions = False
-                synonyms = [l.name() for s in define for l in s.lemmas()]
-                # Remove duplicates
-                s = []
-                i = 0
-                while i < len(synonyms):
-                    if synonyms[i] in s:
-                        synonyms.pop(i)
-                    else:
-                        s.append(synonyms[i])
-                        i += 1
-                definitions.append("[Synonyms]: " + ', '.join(s))
-        if no_definitions:
+        if synset_found:
+            synonyms = [l.name() for s in define for l in s.lemmas()]
+            # Remove duplicates
+            s = []
+            i = 0
+            while i < len(synonyms):
+                if synonyms[i] in s:
+                    synonyms.pop(i)
+                else:
+                    s.append(synonyms[i])
+                    i += 1
+            definitions.append("[Synonyms]: " + ', '.join(s))
+        else:
             # Means local dictionary didn't find anything so search online
             try:
                 synonyms = self.vb.synonym(value, format='list')
                 if synonyms != False:
                     definitions.append("[Synonyms]: " + str(synonyms))
             except:
-                self.debug("method - lookup | issue with vocabulary... ")
+                self.debug(pre + "issue with vocabulary... ")
                 self.debug(sys.exc_info()[0])
         if self.verbose:
             self.debug(
@@ -486,9 +534,12 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
                         words = d[1].split(' ')
                 else:
                     # This is for WIKIPEDIA sections which isn't a string
-                    words = []
-                    for i in page.sections:
-                        words += i.text.split(' ')
+                    try:
+                        words = []
+                        for i in page.sections:
+                            words += i.text.split(' ')
+                    except:
+                        self.debug(pre + "issue with wikipedia")
                 for w in words:
                     if len(w) > 2:
                         if w in question_nouns:
@@ -572,11 +623,18 @@ if __name__ == '__main__':
         action='store_true', default=False,
         help="Spit out debug information"
     )
+    parser.add_argument(
+        '-V', '--version',
+        action='store_true', default=False,
+        help="Spit out debug information"
+    )
     options = parser.parse_args()
 
     # Configure class with command option
     hq = HQTrivia()
     hq.verbose = options.verbose
+    if options.version:
+        hq.debug("version - " + VERSION)
     if options.quicktime:
         hq.use_quicktime = options.quicktime
         hq.use_webcam = False
@@ -585,11 +643,16 @@ if __name__ == '__main__':
         hq.use_quicktime = False
         hq.use_webcam = options.webcam
         hq.use_input = False
-    elif len(options.input) > 0:
-        hq.use_quicktime = False
-        hq.use_webcam = False
-        hq.use_input = True
-        hq.picture = options.input
+    elif options.input:
+        if len(options.input) > 0:
+            hq.use_quicktime = False
+            hq.use_webcam = False
+            hq.use_input = True
+            hq.picture = options.input
+        else:
+            exit()
+    else:
+        exit()
     if options.verbose:
         hq.verbose = options.verbose
 
@@ -601,9 +664,58 @@ if __name__ == '__main__':
     hq.capture()
 
     # Read the picture (use either Tesseract or Vision but not BOTH!!!)
-    hq.vision_ocr() # Google Vision API
-    #hq.enhance() # Google Tesseract
-    #hq.tesseract_ocr() # Google Tesseract
+    queue_vision = mp.Queue()
+    process_vision = mp.Process(
+        target=hq.vision_ocr, args=(queue_vision,))
+    process_vision.daemon = True
+    queue_tesseract = mp.Queue()
+    process_tesseract = mp.Process(
+        target=hq.tesseract_ocr, args=(queue_tesseract,))
+    process_tesseract.daemon = True
+
+    process_vision.start()
+    process_tesseract.start()
+
+    start = time.time()
+    updated = {'tesseract': 0, 'vision': 0}
+    vision_raw = ''
+    tesseract_raw = ''
+    edited_pic = ''
+    while True:
+
+        if not queue_vision.empty():
+            data = queue_vision.get()
+            if data != "END":
+                vision_raw = data
+                updated['vision'] = 1
+            else:
+                updated['vision'] = 2
+
+        if not queue_tesseract.empty():
+            data = queue_tesseract.get()
+            edited_pic = data[0]
+            tesseract_raw = data[1]
+            updated['tesseract'] = 1
+
+        # Make sure it doesn't take too long
+        if ((int(time.time() - start) > 10) or
+            (updated['tesseract'] > 0 and updated['vision'] > 0) or
+            (updated['vision'] == 1)):
+            break
+
+    # Choose vision text over tesseract since it's better
+    print(tesseract_raw)
+    print(vision_raw)
+    if len(vision_raw) > 0:
+        hq.raw = vision_raw
+        hq.debug("Using Google Vision OCR")
+    elif len(tesseract_raw) > 0:
+        hq.raw = tesseract_raw
+        hq.picture = edited_pic
+        hq.debug("Using Google Tesseract OCR")
+    else:
+        hq.debug("COULD NOT FIND TEXT")
+        exit()
 
     # Parse the picture text
     hq.parse()
