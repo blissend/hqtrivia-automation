@@ -3,19 +3,20 @@ import sys
 import pprint as pp # debug purposes
 import time # time how long each section takes
 import multiprocessing as mp # To lookup info online faster
+import argparse
 
 # Lookup word information
 from vocabulary.vocabulary import Vocabulary # online dictionary
-import nltk
+import nltk # local dictionary
 import wikipediaapi # for more advance definitions
+import urllib # google search
+from bs4 import BeautifulSoup # google search
+import requests # google search
+import webbrowser # google search
 
 # Capture source image
 import cv2 # for webcam usage
 from Foundation import * # For osascript crap (applescript)
-import urllib
-from bs4 import BeautifulSoup
-import requests
-import webbrowser
 
 # Google Tesseract OCR
 from PIL import Image, ImageEnhance # photo manipulation
@@ -45,13 +46,12 @@ class HQTrivia():
         # This determines source location on where to caputer picture
         # QuickTime - MacOS has record feature for phone (best)
         # WebCam - Use OpenCV to capture photo (untested)
-        self.source = 'quicktime'
+        self.use_quicktime = False
+        self.use_webcam = False
+        self.use_input = False
 
-        # The phone we will work on can be provided by script argument
-        try:
-            self.picture = sys.argv[1]
-        except:
-            self.picture = 'source'
+        # The filename of picture (no extension means we're capturing image)
+        self.picture = 'source'
 
         # Default location of where to work on self.picture
         self.location = os.getcwd()
@@ -61,7 +61,7 @@ class HQTrivia():
 
         # Default the language for wikipedia searches
         self.wiki = wikipediaapi.Wikipedia('en')
-        self.vb = Vocabulary(timeout=2)
+        self.vb = Vocabulary()
 
         # The OCR text
         self.raw = ''
@@ -72,28 +72,36 @@ class HQTrivia():
         self.definitions = {}
 
         # For debugging
-        self.verbose = True
+        self.verbose = False
 
     def debug(self, msg):
-        print("hqhack.py: " + str(msg))
+        print("hqtrivia-automation.py: " + str(msg))
 
     def capture(self, ftype='tiff'):
         """
         Simple function to select function to capture picture
         """
 
+        if self.verbose:
+            pre = "method - capture | "
+            self.debug(pre + "choosing how to capture...")
+
+        if self.use_input:
+            if self.verbose:
+                self.debug(pre + "input provided, don't capture")
+            return
+
         # Set file type
         self.picture += '.' + ftype
 
-        if self.verbose:
-            self.debug("method - capture | {!s}".format(self.source))
-
-        if self.source == 'quicktime':
+        if self.use_quicktime:
+            if self.verbose:
+                self.debug(pre + "quicktime")
             self.quicktime(ftype)
-        elif self.source == 'webcam':
+        elif self.use_webcam:
+            if self.verbose:
+                self.debug(pre + "webcam")
             self.webcam()
-        else:
-            self.quicktime()
 
     def quicktime(self, ftype='tiff'):
         """
@@ -227,7 +235,7 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
             diff = time.time() - start
             self.debug("method - enhance | elapsed {!s}".format(diff))
 
-    def vision(self):
+    def vision_ocr(self):
         """
         Google Cloud Vision
 
@@ -243,7 +251,10 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
         client = vision.ImageAnnotatorClient() # spits out shit, don't know why
 
         # The image file
-        full_path = os.path.join(self.location, self.picture)
+        if not os.path.isfile(self.picture):
+            full_path = os.path.join(self.location, self.picture)
+        else:
+            full_path = self.picture
 
         # Loads the image into memory
         with io.open(full_path, 'rb') as image_file:
@@ -265,9 +276,11 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
         self.raw.pop(0)
         self.raw.pop(0)
         self.raw.pop(0)
+        if self.raw[0].lower() == "time's up":
+            self.raw.pop(0)
         self.raw.pop(-1)
 
-    def ocr(self):
+    def tesseract_ocr(self):
         """
         Google Tesseract OCR
 
@@ -397,7 +410,7 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
             results = ''
             for g in soup.find_all(class_='st'):
                 results += " " + g.text
-            definitions.append("[Google]: " + results.strip())
+            definitions.append("[Google]: " + results.strip().replace('\n',''))
         except:
             self.debug(pre + "issue with google search... ")
             self.debug(sys.exc_info()[0])
@@ -434,19 +447,22 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
 
         # Get synonyms
         time_synonyms = time.time()
-        if len(define) > 1 and type(define) == list:
-            synonyms = [l.name() for s in define for l in s.lemmas()]
-            # Remove duplicates
-            s = []
-            i = 0
-            while i < len(synonyms):
-                if synonyms[i] in s:
-                    synonyms.pop(i)
-                else:
-                    s.append(synonyms[i])
-                    i += 1
-            definitions.append("[Synonyms]: " + ', '.join(s))
-        else:
+        no_definitions = True
+        if type(define) == list:
+            if len(define) > 0:
+                no_definitions = False
+                synonyms = [l.name() for s in define for l in s.lemmas()]
+                # Remove duplicates
+                s = []
+                i = 0
+                while i < len(synonyms):
+                    if synonyms[i] in s:
+                        synonyms.pop(i)
+                    else:
+                        s.append(synonyms[i])
+                        i += 1
+                definitions.append("[Synonyms]: " + ', '.join(s))
+        if no_definitions:
             # Means local dictionary didn't find anything so search online
             try:
                 synonyms = self.vb.synonym(value, format='list')
@@ -494,14 +510,16 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
         # Answers
         choice = {'index': [], 'score': 0}
         for a, ans in self.answers.items():
-            if 'NOT' not in self.question:
-                if ans['score'] >= choice['score']:
-                    choice['index'].append(a)
+            if ans['score'] == choice['score']:
+                choice['index'].append(a)
+            if 'NOT' in self.question:
+                if ans['score'] < choice['score']:
+                    choice['index'] = [a]
                     choice['score'] = ans['score']
             else:
-                if ans['score'] <= choice['score']:
-                    if type(choice['index']) == list:
-                        choice['index'].append(a)
+                if ans['score'] > choice['score']:
+                    choice['index'] = [a]
+                    choice['score'] = ans['score']
             print("Choice - " + ans['answer'] + ' - Score ' + str(ans['score']))
             for d in self.definitions[ans['answer']]:
                 if type(d) == str:
@@ -530,21 +548,62 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
 if __name__ == '__main__':
     start = time.time()
 
+    # Setup command line options
+    parser = argparse.ArgumentParser(
+        description='Automate searching for answers in HQ Trivia')
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        '-q', '--quicktime',
+        action='store_true', default=False,
+        help="Use quicktime to capture source image"
+    )
+    group.add_argument(
+        '-w', '--webcam',
+        action='store_true', default=False,
+        help="Use webcam to capture source image"
+    )
+    group.add_argument(
+        '-i', '--input',
+        action='store',
+        help="Use image provided instead of capturing"
+    )
+    parser.add_argument(
+        '-v', '--verbose',
+        action='store_true', default=False,
+        help="Spit out debug information"
+    )
+    options = parser.parse_args()
+
+    # Configure class with command option
     hq = HQTrivia()
+    hq.verbose = options.verbose
+    if options.quicktime:
+        hq.use_quicktime = options.quicktime
+        hq.use_webcam = False
+        hq.use_input = False
+    elif options.webcam:
+        hq.use_quicktime = False
+        hq.use_webcam = options.webcam
+        hq.use_input = False
+    elif len(options.input) > 0:
+        hq.use_quicktime = False
+        hq.use_webcam = False
+        hq.use_input = True
+        hq.picture = options.input
+    if options.verbose:
+        hq.verbose = options.verbose
 
     # Uncomment and use your own custom settings
     #hq.location = '/Full/path/to' # Defaults to script location (leave alone)
     #hq.google_auth_json = '<your_json>.json' (if you're using google vision)
-    hq.verbose = True
 
-    # Get picture
-    hq.capture(ftype='png')
-    #hq.capture(ftype='tiff') # better for Google Tesseract
+    # Capture image first
+    hq.capture()
 
     # Read the picture (use either Tesseract or Vision but not BOTH!!!)
-    hq.vision() # Google Vision API
+    hq.vision_ocr() # Google Vision API
     #hq.enhance() # Google Tesseract
-    #hq.ocr() # Google Tesseract
+    #hq.tesseract_ocr() # Google Tesseract
 
     # Parse the picture text
     hq.parse()
