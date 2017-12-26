@@ -1,0 +1,11 @@
+Pillow
+numpy
+PyObjC
+opencv-contrib-python
+Wikipedia-API
+pytesseract
+google-cloud-vision
+nltk
+beautifulsoup4
+Vocabulary
+nltk
