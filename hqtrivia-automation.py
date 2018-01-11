@@ -29,7 +29,7 @@ from google.cloud.vision import types
 import io
 
 os.environ['NO_PROXY'] = '*' # https://bugs.python.org/issue30385
-VERSION = "2017.12.26.05.37"
+VERSION = "2018.01.11.04.30"
 
 """
 I vaguely wondered about the HQ trivia game and automating to get an edge in
@@ -67,12 +67,14 @@ class HQTrivia():
         # The OCR text
         self.raw = ''
 
-        # The information we ultimately wanted to be analyzed
+        # The information we'll be working with and passing around a lot
         self.question = ''
+        self.question_nouns = ''
         self.answers = {}
-        self.definitions = {}
+        self.lookup_info = {}
 
         # For debugging
+        self.times = {}
         self.verbose = False
 
     def debug(self, msg):
@@ -101,13 +103,13 @@ class HQTrivia():
         if self.use_quicktime:
             if self.verbose:
                 self.debug(pre + "quicktime")
-            self.quicktime(ftype)
+            self.scan_quicktime(ftype)
         elif self.use_webcam:
             if self.verbose:
                 self.debug(pre + "webcam")
-            self.webcam()
+            self.scan_webcam()
 
-    def quicktime(self, ftype='tiff'):
+    def scan_quicktime(self, ftype='tiff'):
         """
         Takes screenshot of phone screen via AppleScript
 
@@ -139,8 +141,9 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
         if self.verbose:
             diff = time.time() - start
             self.debug("method - quicktime | elapsed {!s}".format(diff))
+            self.times['scan_quicktime'] = diff
 
-    def webcam(self):
+    def scan_webcam(self):
         """
         Takes screenshot using webcam.
 
@@ -151,7 +154,9 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
         """
 
         if self.verbose:
-            self.debug("method - webcam | starting")
+            pre = "method - webcam | "
+            self.debug(pre + "starting")
+            start = time.time()
 
         video = cv2.VideoCapture(1) # cam id (try from 0 and higher til found)
         video.set(cv2.CAP_PROP_AUTOFOCUS, 0) # turn the autofocus off
@@ -177,11 +182,16 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
         video.release()
         cv2.destroyAllWindows()
 
+        if self.verbose:
+            diff = time.time() - start
+            self.debug(pre + "elapsed {!s}".format(diff))
+            self.times["scan_webcam"] = diff
+
     def enhance(self):
         """
-        Edit image readability for Google OCR that is suuuuuuuuuuuuuper...
+        Edit image readability for Tesseract because it's suuuuuuuuuuuuuper...
 
-        picky
+        picky!!!
 
         1. Eliminate background on buttons (answers)
         2. Turn to grayscale
@@ -191,7 +201,8 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
         """
 
         if self.verbose:
-            self.debug("method - enhance | starting")
+            pre = "method - enhance | "
+            self.debug(pre + "starting")
             start = time.time()
 
         # Replace buttons (answers) background color, incease size scale/DPI
@@ -240,9 +251,10 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
 
         if self.verbose:
             diff = time.time() - start
-            self.debug("method - enhance | elapsed {!s}".format(diff))
+            self.debug(pre + "elapsed {!s}".format(diff))
+            self.times["enhance"] = diff
 
-    def vision_ocr(self, queue):
+    def ocr_vision(self, queue):
         """
         Google Cloud Vision
 
@@ -251,7 +263,7 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
         """
 
         if self.verbose:
-            pre = "method - vision_ocr | "
+            pre = "method - ocr_vision | "
             start = time.time()
             self.debug(pre + "starting")
 
@@ -297,7 +309,7 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
 
         # Clean up text
         self.raw = self.raw.split('\n')
-        self.debug("method - vision_ocr | raw - " + str(self.raw))
+        self.debug(pre + "raw - " + str(self.raw))
         index = 0
         while index < len(self.raw):
             value = self.raw[index].lower()
@@ -308,15 +320,17 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
                 index += 1
         self.raw.pop(-1) # swipe left comment
 
-        if self.verbose:
-            self.debug("method - vision_ocr | raw - cleaned" + str(self.raw))
-            diff = time.time() - start
-            self.debug(pre + "elapsed {!s}".format(diff))
-
         # Return data to parent process
         queue.put(self.raw)
 
-    def tesseract_ocr(self, queue):
+        if self.verbose:
+            self.debug(pre + "raw - cleaned" + str(self.raw))
+            diff = time.time() - start
+            self.debug(pre + "elapsed {!s}".format(diff))
+
+        queue.put("END")
+
+    def ocr_tesseract(self, queue):
         """
         Google Tesseract OCR
 
@@ -328,7 +342,7 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
         #pytesseract.pytesseract.tesseract_cmd = '<fullpath_to_tesseract>'
 
         if self.verbose:
-            pre = "method - tesseract_ocr | "
+            pre = "method - ocr_tesseract | "
             self.debug(pre + "starting")
             start = time.time()
 
@@ -354,24 +368,27 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
             else:
                 index += 1
 
+        # Return the data to main parent process
+        queue.put([self.picture, self.raw])
+
         if self.verbose:
             self.debug(pre + "raw - cleaned = " + str(self.raw))
             diff = time.time() - start
             self.debug(pre + "elapsed {!s}".format(diff))
 
-        # Return the data to main parent process
-        queue.put([self.picture, self.raw])
+        queue.put("END")
 
     def parse(self):
         """
-        Parser for the OCR text
+        Parse the raw OCR text to find the question and answers in it.
 
         This is tricky because the OCR text won't always be the same. So
         adjustments may have to be tweaked here.
         """
 
         if self.verbose:
-            self.debug("method - parse | starting")
+            pre = "method - parse | "
+            self.debug(pre + "starting")
             start = time.time()
 
         # Parse text into question and answer variables
@@ -390,176 +407,283 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
                 if 'Swipe left' not in line:
                     if len(line) > 0 and line != '-':
                         ans = line
-                        self.answers[str(counter)] = {
+                        self.answers[ans] = {
                             "answer": ans,
                             "keywords": [],
                             "score": 0,
                             "index": str(counter)
                         }
-                        self.definitions[ans] = []
+                        self.lookup_info[ans] = []
                         counter += 1
                 else:
                     break
 
+        # Check parsed results
+        if '?' not in self.question:
+            self.debug(pre + "Could not find question!")
+            raise
+        if len(self.answers) < 1:
+            self.debug(pre + "Could not find answers!")
+            raise
+        elif len(self.answers) > 3:
+            self.debug(pre + "Found more than three answers!")
+            raise
+
+        # Get the nouns out of the question
+        for q in nltk.pos_tag(nltk.word_tokenize(self.question)):
+            if q[1] == 'NN' or q[1] == 'NNP':
+                self.question_nouns += " " + q[0]
+        self.question_nouns = self.question_nouns.strip().split(' ')
+
         if self.verbose:
-            self.debug("method - parse | question = " + str(self.question))
-            self.debug("method - parse | answer = " + str(self.answers))
+            self.debug(pre + "question = " + str(self.question))
+            self.debug(
+                pre + "nouns in question - {!s}".format(self.question_nouns))
+            self.debug(pre + "answer = " + str(self.answers))
             diff = time.time() - start
-            self.debug("method - parse | elapsed {!s}".format(diff))
+            self.debug(pre + "elapsed {!s}".format(diff))
+            self.times["parse"] = diff
 
-    def lookup(self, index):
+    def keywords(self, words):
         """
-        Gets information about answer to determine relevance to question
+        Simple function to find words in a string that are also in question
+        and then return those keywords found.
+        """
 
-        This is a multiprocess function and therefore updated values have to be
-        returned to parent process.
+        keywords = []
+        for w in words:
+            if len(w) > 2:
+                if w in self.question_nouns:
+                    if w not in keywords:
+                        keywords.append(w)
+
+        return keywords
+
+    def lookup_wiki(self, queue):
+        """
+        Gets wikipedia information about answer
+
+        Multiprocess so needs to return results to parent
         """
 
         if self.verbose:
-            pre = "method - lookup | "
+            pre = "method - lookup_wiki | "
             self.debug(pre + "starting")
             start = time.time()
 
-        # Reference/copy of self values
-        answers = self.answers[index]
-        definitions = self.definitions[answers['answer']]
-        value = answers['answer']
-        question_nouns = ''
-        for q in nltk.pos_tag(nltk.word_tokenize(self.question)):
-            if q[1] == 'NN' or q[1] == 'NNP':
-                question_nouns += " " + q[0]
-        question_nouns = question_nouns.strip().split(' ')
-        if self.verbose:
-            self.debug(pre + "nouns in question - {!s}".format(question_nouns))
+        # Loop through answers and search wikipedia
+        for index, ans in self.answers.items():
+            l_info = self.lookup_info[ans['answer']]
 
-        # First get wikipedia information (the most helpful)
-        time_wiki = time.time()
-        try:
-            page = self.wiki.page(value)
-            if page.exists():
-                definitions.append(page)
-                definitions.append("[Wikipedia]: " + page.summary)
-        except:
-            self.debug(pre + "issue with wikipedia... ")
-            self.debug(sys.exc_info()[0])
-        if self.verbose:
-            self.debug(pre + "wiki elapsed " + str(time.time() - time_wiki))
-
-        # Google search
-        time_gsearch = time.time()
-        try:
-            text = urllib.parse.quote_plus(value)
-            url = 'https://google.com/search?q=' + text
-            response = requests.get(url, timeout=2)
-            soup = BeautifulSoup(response.text, 'lxml')
-            results = ''
-            for g in soup.find_all(class_='st'):
-                results += " " + g.text
-            definitions.append("[Google]: " + results.strip().replace('\n',''))
-        except:
-            self.debug(pre + "issue with google search... ")
-            self.debug(sys.exc_info()[0])
-        if self.verbose:
-            self.debug(
-                pre +
-                "google search elapsed " +
-                str(time.time() - time_gsearch))
-
-        # Get dictionary definitions
-        time_define = time.time()
-        define = nltk.corpus.wordnet.synsets(value)
-        synset_found = False
-        if len(define) < 1:
-            # Means local dictionary didn't find anything so search online
-            if self.verbose:
-                self.debug(
-                    pre +
-                    "nltk nothing for {!s}, using vocabulary".format(value))
             try:
-                define = self.vb.meaning(value, format='list')
-                if define != False:
-                    # There may be multiple difinitions so count them up
-                    counter = 1
-                    for d in define:
-                        definitions.append(
-                            "[Meaning " + str(counter) + "]: " + d)
-                        counter += 1
-            except:
-                self.debug(pre + "issue with vocabulary... ")
-                self.debug(sys.exc_info()[0])
-        else:
-            synset_found = True
-            definitions.append("[Meaning]: " + define[0].definition())
-        if self.verbose:
-            self.debug(
-                pre +
-                "dictionary elapsed " +
-                str(time.time() - time_define))
+                page = self.wiki.page(ans['answer'])
+                if page.exists():
 
-        # Get synonyms
-        time_synonyms = time.time()
-        if synset_found:
-            synonyms = [l.name() for s in define for l in s.lemmas()]
-            # Remove duplicates
-            s = []
-            i = 0
-            while i < len(synonyms):
-                if synonyms[i] in s:
-                    synonyms.pop(i)
-                else:
-                    s.append(synonyms[i])
-                    i += 1
-            definitions.append("[Synonyms]: " + ', '.join(s))
-        else:
-            # Means local dictionary didn't find anything so search online
-            try:
-                synonyms = self.vb.synonym(value, format='list')
-                if synonyms != False:
-                    definitions.append("[Synonyms]: " + str(synonyms))
-            except:
-                self.debug(pre + "issue with vocabulary... ")
-                self.debug(sys.exc_info()[0])
-        if self.verbose:
-            self.debug(
-                pre +
-                "synonyms elapsed " +
-                str(time.time() - time_synonyms))
-
-        # Score the answer
-        if len(definitions) > 0:
-            for define in definitions:
-                if type(define) == str:
-                    if "[Wikipedia]" not in define:
-                        d = define.split(':') # remove pretag [Google]: bla blah
-                        words = d[1].split(' ')
-                else:
-                    # This is for WIKIPEDIA sections which isn't a string
                     try:
                         words = []
                         for i in page.sections:
                             words += i.text.split(' ')
                     except:
-                        self.debug(pre + "issue with wikipedia")
-                for w in words:
-                    if len(w) > 2:
-                        if w in question_nouns:
-                            if w not in answers['keywords']:
-                                answers['keywords'].append(w)
-                                answers['score'] += 1
+                        self.debug(
+                            pre + "issue with wikipedia for {!s}"
+                            .format(ans['answer']))
+                    else:
+                        l_info.append("[Wikipedia]: " + page.summary)
+                        queue.put([ans['answer'], self.keywords(words), l_info])
+
+                else:
+
+                    a = ans['answer'].split(' ')
+                    if len(a) < 2:
+
+                        # Could not find page, so throw exception and move on
+                        self.debug(
+                            pre + "no results for {!s} in wikipedia... ".
+                            format(ans['asnwer']))
+                        raise
+
+                    else:
+
+                        # Try searching each word in answer as last resort
+                        for w in a:
+                            if len(w) > 3:
+                                page = self.wiki.page(w)
+                                if page.exists():
+                                    try:
+                                        words = []
+                                        for i in page.sections:
+                                            words += i.text.split(' ')
+                                    except:
+                                        self.debug(
+                                            pre +
+                                            "issue with wikipedia for {!s}"
+                                            .format(ans['answer']))
+                                    else:
+                                        l_info.append(
+                                            "[Wikipedia {!s}]: ".format(w) +
+                                            page.summary)
+                                        queue.put([
+                                            ans['answer'],
+                                            self.keywords(words),
+                                            l_info])
+
+
+            except:
+                self.debug(
+                    pre + "issue with wikipedia for {!s}... "
+                    .format(ans['answer']))
+                self.debug(sys.exc_info())
+
+        queue.put("END")
+        if self.verbose:
+            self.debug(pre + "elapsed " + str(time.time() - start))
+
+    def lookup_dict_and_syn(self, queue):
+        """
+        Use nltk to look up word info, if failure, use vocabulary (online)
+        """
 
         if self.verbose:
-            diff = time.time() - start
-            self.debug("method - lookup | elapsed {!s} for {!s}".format(diff, index))
+            pre = "method - lookup_dict_and_syn | "
+            self.debug(pre + "starting")
+            start = time.time()
 
-        # Send data back to parent process
-        return answers, definitions, index
+        # Get dictionary/synonyms
+        for index, ans in self.answers.items():
+            l_info = self.lookup_info[ans['answer']]
+            a = ans['answer'].split(' ') # incase of multi word answers
+
+            for w in a:
+                # Don't look up small words (waste of time)
+                if len(w) > 3:
+
+                    # definition
+                    define = nltk.corpus.wordnet.synsets(w)
+                    synset_found = False
+                    if len(define) < 1:
+                        # Local dictionary didn't find anything so search online
+                        if self.verbose:
+                            self.debug(
+                                pre + "nltk none for {!s}, using vocabulary"
+                                .format(w))
+                        try:
+                            define = self.vb.meaning(w, format='list')
+                            if define != False:
+                                # Multiple definitions possible
+                                for d in define:
+                                    l_info.append(
+                                        "[Meaning {!s}]: ".format(w) + d)
+                                    queue.put([
+                                        ans['answer'],
+                                        self.keywords(d),
+                                        l_info])
+                        except:
+                            self.debug(
+                                pre + "issue with vocabulary for {!s}... "
+                                .format(w))
+                            self.debug(sys.exc_info())
+                    else:
+                        synset_found = True
+                        l_info.append(
+                            "[Meaning {!s}]: ".format(w) +
+                            define[0].definition())
+                        queue.put([
+                            ans['answer'],
+                            self.keywords(define[0].definition()),
+                            l_info])
+
+                    # Synonyms
+                    if synset_found:
+                        synonyms = [l.name() for s in define for l in s.lemmas()]
+
+                        # Remove duplicates nltk adds
+                        s = []
+                        i = 0
+                        while i < len(synonyms):
+                            if synonyms[i] in s:
+                                synonyms.pop(i)
+                            else:
+                                s.append(synonyms[i])
+                                i += 1
+                        syn = ', '.join(s)
+                        l_info.append("[Synonyms {!s}]: ".format(w) + syn)
+                        queue.put([ans['answer'], self.keywords(syn), l_info])
+                    else:
+                        # Local dictionary didn't find anything so search online
+                        self.debug(
+                            pre + "nltk has nothing for {!s}, using vocabulary"
+                            .format(w))
+                        try:
+                            synonyms = self.vb.synonym(w, format='list')
+                            if synonyms != False:
+                                l_info.append(
+                                    "[Synonyms {!s}]: ".format(w) +
+                                    str(synonyms))
+                                queue.put([
+                                    ans['answer'],
+                                    self.keywords(str(synonyms)),
+                                    l_info])
+                        except:
+                            self.debug(
+                                pre + "issue with vocabulary for {!s}... "
+                                .format(w))
+                            self.debug(sys.exc_info())
+
+        queue.put("END")
+        if self.verbose:
+            self.debug(
+                pre + "elapsed " + str(time.time() - start))
+
+    def lookup_google_search(self, queue):
+        """
+        Does a google search for each answer and finds if words in results are
+        found in question
+        """
+
+        if self.verbose:
+            pre = "method - lookup_google_search | "
+            self.debug(pre + "starting")
+            start = time.time()
+
+        # Google search
+        for index, ans in self.answers.items():
+            l_info = self.lookup_info[ans['answer']]
+            try:
+                text = urllib.parse.quote_plus(ans['answer'])
+                url = 'https://google.com/search?q=' + text
+                response = requests.get(url, timeout=2)
+                soup = BeautifulSoup(response.text, 'lxml')
+                results = ''
+                for g in soup.find_all(class_='st'):
+                    results += " " + g.text
+                cleaned_results = results.strip().replace('\n','')
+                l_info.append("[Google]: " + cleaned_results)
+                queue.put([
+                    ans['answer'],
+                    self.keywords(cleaned_results),
+                    l_info])
+            except:
+                self.debug(
+                    pre + "issue with google search for {!s}... "
+                    .format(ans['answer']))
+                self.debug(sys.exc_info())
+
+        if self.verbose:
+            self.debug(
+                pre + "google search elapsed " + str(time.time() - start))
 
     def display(self):
-        # Question
-        print('\n\nQuestion - ' + self.question, end='\n\n')
+        # Clear the screen
+        os.system('cls' if os.name == 'nt' else 'clear')
 
-        # Answers
-        choice = {'index': [], 'score': 0}
+        # Text to output to screen
+        output = []
+
+        # Question
+        output.append('\n\nQuestion - ' + self.question + '\n')
+
+        # Answers & Lookup Info
+        choice = {'index': [], 'score': 0, 'l_info': []}
         for a, ans in self.answers.items():
             if ans['score'] == choice['score']:
                 choice['index'].append(a)
@@ -571,30 +695,41 @@ do shell script "screencapture -x -t tiff -l " & winID &"""
                 if ans['score'] > choice['score']:
                     choice['index'] = [a]
                     choice['score'] = ans['score']
-            print("Choice - " + ans['answer'] + ' - Score ' + str(ans['score']))
-            for d in self.definitions[ans['answer']]:
-                if type(d) == str:
-                    if len(d) > 140:
-                        print(d[0:140])
-                    else:
-                        print(d)
-            print("[Keywords]: " + str(ans['keywords']))
-            print("")
+            output.append(
+                "Choice - " + ans['answer'] +
+                ' - Score ' + str(ans['score']))
+            for l_info in self.lookup_info[ans['answer']]:
+                for l in l_info:
+                    l_index = l.split(':')[0]
+                    if l_index not in choice['l_info']:
+                        choice['l_info'].append(l_index)
+                        if len(l) > 140:
+                            output.append(l[0:140])
+                        else:
+                            output.append(l)
+            output.append("[Keywords]: " + str(ans['keywords']))
+            output.append("")
 
-        # Choose answer
+        # Highest scoring answer
         if len(choice['index']) > 0:
             choose = []
             for i in choice['index']:
                 choose.append(self.answers[i]['answer'])
-            print("Answer - " + ', '.join(choose), end='')
+            msg = "Answer - " + ', '.join(choose)
             if 'NOT' in self.question:
-                print(" - NOT keyword so lowest score is " +
-                      str(choice['score']))
+                msg += (" - NOT keyword so lowest score is " +
+                        str(choice['score']))
             else:
-                print(" - highest score is " + str(choice['score']))
+                msg += (" - highest score is " + str(choice['score']))
+            output.append(msg)
         else:
-            print("Answer - Unknown")
-        print("")
+            output.append("Answer - Unknown")
+        output.append("")
+        output.insert(1, msg + '\n')
+
+        # Finally print it all
+        for line in output:
+            print(line)
 
 if __name__ == '__main__':
     start = time.time()
@@ -663,42 +798,44 @@ if __name__ == '__main__':
     # Capture image first
     hq.capture()
 
-    # Read the picture (use either Tesseract or Vision but not BOTH!!!)
-    queue_vision = mp.Queue()
-    process_vision = mp.Process(
-        target=hq.vision_ocr, args=(queue_vision,))
-    process_vision.daemon = True
-    queue_tesseract = mp.Queue()
-    process_tesseract = mp.Process(
-        target=hq.tesseract_ocr, args=(queue_tesseract,))
-    process_tesseract.daemon = True
-
-    process_vision.start()
-    process_tesseract.start()
-
-    start = time.time()
+    # Read the picture (use multiprocessing for multiple OCR readers)
     updated = {'tesseract': 0, 'vision': 0}
     vision_raw = ''
     tesseract_raw = ''
     edited_pic = ''
+    q_vision = mp.Queue()
+    q_tess = mp.Queue()
+    p_vision = mp.Process(target=hq.ocr_vision, args=(q_vision,))
+    p_tess = mp.Process(target=hq.ocr_tesseract, args=(q_tess,))
+    p_vision.daemon = True
+    p_tess.daemon = True
+    start_ocr = time.time()
+    p_vision.start()
+    p_tess.start()
     while True:
 
-        if not queue_vision.empty():
-            data = queue_vision.get()
+        if not q_vision.empty():
+            data = q_vision.get()
             if data != "END":
                 vision_raw = data
                 updated['vision'] = 1
+                hq.times['ocr_vision'] = time.time() - start_ocr
             else:
+                hq.times['ocr_vision'] = time.time() - start_ocr
                 updated['vision'] = 2
 
-        if not queue_tesseract.empty():
-            data = queue_tesseract.get()
-            edited_pic = data[0]
-            tesseract_raw = data[1]
-            updated['tesseract'] = 1
+        if not q_tess.empty():
+            data = q_tess.get()
+            if data != "END":
+                edited_pic = data[0]
+                tesseract_raw = data[1]
+                updated['tesseract'] = 1
+                hq.times['ocr_vision'] = time.time() - start_ocr
+            else:
+                hq.times['ocr_tesseract'] = time.time() - start_ocr
 
         # Make sure it doesn't take too long
-        if ((int(time.time() - start) > 10) or
+        if ((int(time.time() - start_ocr) > 10) or
             (updated['tesseract'] > 0 and updated['vision'] > 0) or
             (updated['vision'] == 1)):
             break
@@ -714,22 +851,84 @@ if __name__ == '__main__':
         hq.picture = edited_pic
         hq.debug("Using Google Tesseract OCR")
     else:
-        hq.debug("COULD NOT FIND TEXT")
+        hq.debug("COULD NOT FIND TEXT!")
         exit()
+    diff = time.time() - start_ocr
+    hq.debug("OCR | elapsed {!s}".format(diff))
+    hq.times["ocr"] = diff
 
     # Parse the picture text
     hq.parse()
 
-    # Get information about answers (time consumping so do multiprocessing)
-    with mp.Pool(3) as p:
-        result = p.starmap_async(hq.lookup, ('1', '2', '3',)).get() # .get(timeout=5)
-    for new in result:
-        index = new[2]
-        hq.answers[index] = new[0]
-        hq.definitions[new[0]['answer']] = new[1]
+    # Get information about answers (time consuming so do multiprocessing)
+    q_wiki = mp.Queue()
+    q_dict = mp.Queue()
+    q_gsearch = mp.Queue()
+    # Queue returns list of [answer_text, keyword_list, lookup_info]
+    p_wiki = mp.Process(target=hq.lookup_wiki, args=(q_wiki,))
+    p_dict = mp.Process(target=hq.lookup_dict_and_syn, args=(q_dict,))
+    p_gsearch = mp.Process(target=hq.lookup_google_search, args=(q_gsearch,))
+    p_wiki.daemon = True
+    p_dict.daemon = True
+    p_gsearch.deamon = True
+    start_lookup = time.time()
+    p_wiki.start()
+    p_dict.start()
+    p_gsearch.start()
+    while True:
 
-    # Display the results!
+        # Thread counts finished
+        count_cur = 0
+        count_max = 3
+
+        def update_display(data):
+            ans = data[0]
+            keys = data[1]
+            l_info = data[2]
+            for k in keys:
+                if k not in hq.answers[ans]['keywords']:
+                    hq.answers[ans]['keywords'].append(k)
+            hq.answers[ans]['score'] = len(hq.answers[ans]['keywords'])
+            hq.lookup_info[ans].append(l_info)
+            hq.display()
+
+        if not q_wiki.empty():
+            data = q_wiki.get()
+            if data != "END":
+                update_display(data)
+            else:
+                hq.times['lookup_wiki'] = time.time() - start_lookup
+                count_cur += 1
+
+        if not q_gsearch.empty():
+            data = q_gsearch.get()
+            if data != "END":
+                update_display(data)
+            else:
+                hq.times['lookup_google_search'] = time.time() - start_lookup
+                count_cur += 1
+
+        if not q_dict.empty():
+            data = q_dict.get()
+            if data != "END":
+                update_display(data)
+            else:
+                hq.times['lookup_dict_and_syn'] = time.time() - start_lookup
+                count_cur += 1
+
+        # Make sure it doesn't take too long
+        if int(time.time() - start_lookup) > 10 or count_cur == count_max:
+            break
+
+    # Display the final results!
+    diff = time.time() - start_lookup
+    hq.debug("Lookups elapsed {!s}".format(diff))
+    hq.times['lookups'] = diff
     hq.display()
 
+    # Show total times for everything
     diff = time.time() - start
-    print("Total Time - {!s}".format(diff))
+    hq.times['total'] = diff
+    if hq.verbose:
+        hq.debug("Time")
+        pp.pprint(hq.times)

@@ -6,11 +6,11 @@ Note using this during live game would break HQ's terms of service. So if you wa
 # Work Flow
 1. Capture source image either via quicktime player (recommended) or webcam (untested). If using quicktime you can do a movie recording without actually recording. Just hit the drop down arrow by the record button to select iPhone as source (iPhone must be connected by wire).
 
-2. Choose either Google Tesseract OCR (free/open source) or Google Vision API (free but requires billing account and has limits). Note that Vision API is generally better.
+2. Multiple OCR engines will attempt to read the text off image. Currently supporting Google Tesseract OCR (free/open source) or Google Vision API (free but requires billing account and has limits). Note that Vision API is generally better.
 
-3. Text is parsed into question and answers. The answers are then searched wikipedia, multiple dictionaries and synonyms are looked up too. NOTE: More will be added soon. Finally, searches that have more relevancy with the question are scored higher. The answer that scores the highest is shown. NOTE: All of this is done in a multiprocessing pool to speed up results.
+3. Text is parsed into question and answers. The answers are then searched wikipedia, google search, multiple dictionaries and synonyms are looked up too. NOTE: More will be added soon. Finally, searches that have more relevancy with the question are scored higher. The answer that scores the highest is shown. NOTE: All of this is done in a multiprocessing pool to speed up results.
 
-4. Display the results on screen.
+4. Display the results on screen as answers are being looked up.
 
 # Installation
 Use python 3.6 and take notice of the modules used in the python file. In particular the packages used are...
