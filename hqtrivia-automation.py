@@ -29,7 +29,7 @@ from google.cloud.vision import types
 import io
 
 os.environ['NO_PROXY'] = '*' # https://bugs.python.org/issue30385
-VERSION = "2018.01.11.04.30"
+VERSION = "2018.01.11.05.31"
 
 """
 I vaguely wondered about the HQ trivia game and automating to get an edge in
@@ -58,7 +58,7 @@ class HQTrivia():
         self.location = os.getcwd()
 
         # Replace with your own auth file name
-        self.google_auth_json = 'blissend.json'
+        self.google_auth_json = 'gvision_auth.json'
 
         # Default the language for wikipedia searches
         self.wiki = wikipediaapi.Wikipedia('en')
